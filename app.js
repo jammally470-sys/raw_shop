@@ -10,6 +10,7 @@ const products = [
 ];
 const cart = new Map();
 const favorites = new Set();
+let currentUser = null;
 let activeCategory = "All";
 let searchTerm = "";
 let toastTimer;
@@ -85,6 +86,43 @@ function showView(view) {
   window.scrollTo({top:0,behavior:"smooth"});
   if (!showShop) document.querySelector("#login-email").focus({preventScroll:true});
 }
+function updateAccountButton() {
+  const button = document.querySelector(".account-button");
+  const label = document.querySelector("#account-label");
+  label.textContent = currentUser ? (currentUser.name.split(/\s+/)[0] || "Account") : "Sign in";
+  button.setAttribute("aria-label", currentUser ? `Sign out ${currentUser.name}` : "Sign in with Google");
+  button.title = currentUser ? `Signed in as ${currentUser.email}. Click to sign out.` : "Sign in with Google";
+}
+async function loadAuthSession() {
+  try {
+    const response = await fetch("/api/session", {credentials:"same-origin",cache:"no-store"});
+    if (response.ok) {
+      const data = await response.json();
+      currentUser = data.authenticated ? data.user : null;
+      updateAccountButton();
+    }
+  } catch {
+    // The storefront still works when opened without the Node auth server.
+  }
+  const result = new URLSearchParams(window.location.search).get("auth");
+  if (result) {
+    showToast(result === "success" ? `Welcome, ${currentUser?.name || "you're signed in"}.` : result === "cancelled" ? "Google sign-in was cancelled." : "Google sign-in could not be completed.");
+    const cleanUrl = new URL(window.location.href);
+    cleanUrl.searchParams.delete("auth");
+    window.history.replaceState({}, "", cleanUrl.pathname + cleanUrl.search + cleanUrl.hash);
+  }
+}
+async function signOut() {
+  try {
+    const response = await fetch("/auth/logout", {method:"POST",credentials:"same-origin"});
+    if (!response.ok) throw new Error("Sign-out failed");
+    currentUser = null;
+    updateAccountButton();
+    showToast("You’ve signed out.");
+  } catch {
+    showToast("Couldn’t reach the sign-in server. Try again.");
+  }
+}
 
 document.addEventListener("click", (event) => {
   const add = event.target.closest("[data-add]");
@@ -99,7 +137,7 @@ document.addEventListener("click", (event) => {
   if (categoryLink) { event.preventDefault(); const category=categoryLink.dataset.categoryLink; if(["All","Audio","Wearables","Accessories"].includes(category))setCategory(category); return; }
   if (event.target.closest("[data-open-cart]")) { openCart(); return; }
   if (event.target.closest("[data-close-cart]")) { closeCart(); return; }
-  if (event.target.closest("[data-open-auth]")) { showView("auth"); return; }
+  if (event.target.closest("[data-open-auth]")) { currentUser ? signOut() : showView("auth"); return; }
   const viewLink=event.target.closest("[data-view]");
   if(viewLink){event.preventDefault();showView(viewLink.dataset.view);return;}
   if(event.target.closest("[data-checkout]")){showToast("Checkout is a UI demo — your bag is saved here.");return;}
@@ -110,11 +148,11 @@ document.querySelector("#product-search").addEventListener("input",(event)=>{sea
 document.querySelector(".search-toggle").addEventListener("click",()=>{document.querySelector("#product-search").focus();document.querySelector("#products").scrollIntoView({behavior:"smooth"});});
 overlay.addEventListener("click",closeCart);
 document.querySelector(".mobile-menu").addEventListener("click",(event)=>{const nav=document.querySelector(".desktop-nav");const expanded=event.currentTarget.getAttribute("aria-expanded")==="true";event.currentTarget.setAttribute("aria-expanded",String(!expanded));nav.classList.toggle("mobile-open",!expanded);});
-document.querySelector("#google-signin").addEventListener("click",()=>showToast("Google sign-in is a UI demo."));
+document.querySelector("#google-signin").addEventListener("click",()=>{window.location.assign("/auth/google");});
 document.querySelector("#login-form").addEventListener("submit",(event)=>{event.preventDefault();showToast("Sign-in is a UI demo — no account is connected.");});
 document.querySelector("#forgot-password").addEventListener("click",(event)=>{event.preventDefault();showToast("Password reset is not connected in this demo.");});
 document.querySelector("#create-account").addEventListener("click",()=>showToast("Account creation is not connected in this demo."));
 document.querySelector("#toggle-password").addEventListener("click",(event)=>{const input=document.querySelector("#login-password");const show=input.type==="password";input.type=show?"text":"password";event.currentTarget.setAttribute("aria-label",show?"Hide password":"Show password");});
 document.querySelector("#newsletter-form").addEventListener("submit",(event)=>{event.preventDefault();event.currentTarget.reset();showToast("You’re on the list. Welcome in.");});
 document.addEventListener("keydown",(event)=>{if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==="k"){event.preventDefault();showView("shop");document.querySelector("#product-search").focus();document.querySelector("#products").scrollIntoView({behavior:"smooth"});}if(event.key==="Escape"&&cartDrawer.classList.contains("open"))closeCart();});
-renderProducts(); renderCart();
+renderProducts(); renderCart(); loadAuthSession();
