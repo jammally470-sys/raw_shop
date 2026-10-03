@@ -1,0 +1,13 @@
+{
+  "name": "coretech-by-jamal-shop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Coretech by Jamal storefront and Google sign-in server",
+  "scripts": {
+    "start": "node dev-server.js",
+    "db:ensure-users": "node dev-server.js --ensure-users-table"
+  },
+  "dependencies": {
+    "pg": "^8.16.3"
+  }
+}

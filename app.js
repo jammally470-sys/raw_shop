@@ -114,6 +114,8 @@ async function loadAuthSession() {
       token: "Google rejected the client credentials or callback URI. Check the OAuth web client settings.",
       profile: "Google did not return a verified profile for this account.",
       network: "The sign-in server could not reach Google. Check its network access.",
+      "database-config": "Google verified your account, but Supabase is not configured on the sign-in server. Add both database variables to .env and restart.",
+      database: "Google verified your account, but Supabase could not save it. Check the database connection and public.users table permissions.",
       provider: "Google could not authorize this sign-in. Check the Google consent screen settings.",
     };
     showToast(authMessages[result] || "Google sign-in could not be completed.");

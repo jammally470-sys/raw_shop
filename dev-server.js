@@ -2,6 +2,7 @@ const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { Pool } = require("pg");
 
 const root = process.cwd();
 const port = Number(process.env.PORT || 5500);
@@ -26,11 +27,114 @@ loadEnvFile();
 const googleClientId = process.env.GOOGLE_CLIENT_ID?.trim();
 const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
 const redirectUri = process.env.GOOGLE_REDIRECT_URI?.trim() || `http://localhost:${port}/auth/callback`;
+const supabaseDatabasePassword = process.env.SUPABASE_DATABASE_PASSWORD;
+const supabaseDatabaseConnectionString = process.env.SUPABASE_DATABASE_CONNECTION_STRING?.trim();
 const secureCookies = process.env.NODE_ENV === "production" || redirectUri.startsWith("https://");
 const sessionLifetimeSeconds = 7 * 24 * 60 * 60;
 const stateLifetimeMs = 5 * 60 * 1000;
 const sessions = new Map();
 const pendingAuth = new Map();
+let supabasePool;
+let usersTableReady;
+
+class SupabaseConfigurationError extends Error {}
+
+function safeDatabaseErrorCode(error) {
+  let current = error;
+  for (let depth = 0; current && depth < 3; depth++, current = current.cause) {
+    const code = typeof current.code === "string" ? current.code : "";
+    if (/^[A-Z0-9_]{2,24}$/.test(code)) return code;
+  }
+  return "unknown";
+}
+
+function safeDatabaseErrorCategory(error) {
+  const code = safeDatabaseErrorCode(error);
+  if (/^(28P01|28000|28P02)$/.test(code)) return "authentication";
+  if (/^(ENOTFOUND|EAI_AGAIN)$/.test(code)) return "dns";
+  if (/^(ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH)$/.test(code)) return "network";
+  if (/^(CERT_|ERR_TLS|ERR_SSL)/.test(code)) return "tls";
+  const message = String(error?.message || error?.cause?.message || "");
+  if (/password authentication|SASL|client password must be a string/i.test(message)) return "authentication";
+  if (/getaddrinfo|ENOTFOUND|EAI_AGAIN/i.test(message)) return "dns";
+  if (/timeout|timed out|connection terminated|connect ECONN|network/i.test(message)) return "network";
+  if (/certificate|TLS|SSL/i.test(message)) return "tls";
+  if (/permission denied|not authorized|no pg_hba/i.test(message)) return "permissions";
+  if (/relation .* does not exist|column .* does not exist/i.test(message)) return "schema";
+  return "unknown";
+}
+
+function getSupabasePool() {
+  if (supabasePool) return supabasePool;
+  if (!supabaseDatabasePassword || !supabaseDatabaseConnectionString) {
+    throw new SupabaseConfigurationError("Supabase database configuration is missing");
+  }
+
+  let connectionUrl;
+  try {
+    connectionUrl = new URL(supabaseDatabaseConnectionString);
+    if (!["postgres:", "postgresql:"].includes(connectionUrl.protocol)) throw new Error("Unsupported database protocol");
+  } catch {
+    throw new SupabaseConfigurationError("Supabase database connection string is invalid");
+  }
+
+  // The password is supplied separately so reserved characters are safely URL encoded.
+  connectionUrl.password = supabaseDatabasePassword;
+  connectionUrl.searchParams.set("uselibpqcompat", "true");
+  connectionUrl.searchParams.set("sslmode", "require");
+  supabasePool = new Pool({
+    connectionString: connectionUrl.toString(),
+    max: 5,
+    connectionTimeoutMillis: 8000,
+    idleTimeoutMillis: 30000,
+  });
+  supabasePool.on("error", (error) => {
+    console.error(`[Supabase] idle database connection error (${safeDatabaseErrorCategory(error)}; ${safeDatabaseErrorCode(error)})`);
+  });
+  return supabasePool;
+}
+
+async function ensureUsersTable() {
+  if (!usersTableReady) {
+    usersTableReady = (async () => {
+      const pool = getSupabasePool();
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS public.users (
+          google_sub TEXT PRIMARY KEY,
+          email TEXT NOT NULL,
+          full_name TEXT NOT NULL,
+          avatar_url TEXT,
+          email_verified BOOLEAN NOT NULL DEFAULT TRUE,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          last_sign_in_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await pool.query("ALTER TABLE public.users ENABLE ROW LEVEL SECURITY");
+    })().catch((error) => {
+      usersTableReady = null;
+      throw error;
+    });
+  }
+  return usersTableReady;
+}
+
+async function saveGoogleUser(profile) {
+  await ensureUsersTable();
+  const pool = getSupabasePool();
+  await pool.query(`
+    INSERT INTO public.users
+      (google_sub, email, full_name, avatar_url, email_verified, created_at, updated_at, last_sign_in_at)
+    VALUES ($1, $2, $3, $4, TRUE, NOW(), NOW(), NOW())
+    ON CONFLICT (google_sub) DO UPDATE SET
+      email = EXCLUDED.email,
+      full_name = EXCLUDED.full_name,
+      avatar_url = EXCLUDED.avatar_url,
+      email_verified = TRUE,
+      updated_at = NOW(),
+      last_sign_in_at = NOW()
+  `, [profile.sub, profile.email, profile.name || profile.email, profile.picture || null]);
+}
 
 const mime = {
   ".html": "text/html; charset=utf-8",
@@ -177,6 +281,15 @@ async function handleGoogleCallback(request, response, requestUrl) {
       return;
     }
 
+    try {
+      await saveGoogleUser(profile);
+    } catch (error) {
+      const reason = error instanceof SupabaseConfigurationError ? "database-config" : "database";
+      console.error(`[Google OAuth] Supabase user save failed (${safeDatabaseErrorCategory(error)}; ${safeDatabaseErrorCode(error)})`);
+      fail(reason);
+      return;
+    }
+
     const sessionId = crypto.randomBytes(32).toString("base64url");
     sessions.set(sessionId, {
       user: {
@@ -289,15 +402,30 @@ async function handleRequest(request, response) {
   });
 }
 
-setInterval(() => {
-  const now = Date.now();
-  for (const [state, pending] of pendingAuth) if (pending.expiresAt <= now) pendingAuth.delete(state);
-  for (const [sessionId, session] of sessions) if (session.expiresAt <= now) sessions.delete(sessionId);
-}, 60_000).unref();
+if (process.argv.includes("--ensure-users-table")) {
+  ensureUsersTable()
+    .then(() => console.log("[Supabase] public.users table is ready."))
+    .catch((error) => {
+      const detail = error instanceof SupabaseConfigurationError
+        ? "database configuration is missing or invalid"
+        : `database operation failed (${error.name || "Error"})`;
+      console.error(`[Supabase] Could not prepare public.users: ${detail} (${safeDatabaseErrorCategory(error)}; ${safeDatabaseErrorCode(error)}).`);
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      if (supabasePool) await supabasePool.end();
+    });
+} else {
+  setInterval(() => {
+    const now = Date.now();
+    for (const [state, pending] of pendingAuth) if (pending.expiresAt <= now) pendingAuth.delete(state);
+    for (const [sessionId, session] of sessions) if (session.expiresAt <= now) sessions.delete(sessionId);
+  }, 60_000).unref();
 
-http.createServer((request, response) => {
-  handleRequest(request, response).catch(() => {
-    if (!response.headersSent) response.writeHead(500, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
-    response.end("Server error");
-  });
-}).listen(port, process.env.HOST || "127.0.0.1");
+  http.createServer((request, response) => {
+    handleRequest(request, response).catch(() => {
+      if (!response.headersSent) response.writeHead(500, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
+      response.end("Server error");
+    });
+  }).listen(port, process.env.HOST || "127.0.0.1");
+}
