@@ -122,20 +122,25 @@ async function handleGoogleCallback(request, response, requestUrl) {
   const fail = (reason) => redirect(response, `/?auth=${encodeURIComponent(reason)}`, [clearState]);
 
   if (!state || !stateCookie || state !== stateCookie || !pending || pending.expiresAt <= Date.now()) {
-    fail("error");
+    console.warn("[Google OAuth] state validation failed");
+    fail("state");
     return;
   }
   if (requestUrl.searchParams.has("error")) {
-    fail(requestUrl.searchParams.get("error") === "access_denied" ? "cancelled" : "error");
+    const providerError = requestUrl.searchParams.get("error");
+    console.warn(`[Google OAuth] provider returned ${providerError === "access_denied" ? "access_denied" : "an error"}`);
+    fail(providerError === "access_denied" ? "cancelled" : "provider");
     return;
   }
 
   const code = requestUrl.searchParams.get("code");
   if (!code || !authConfigIsPresent()) {
-    fail("error");
+    console.warn("[Google OAuth] callback missing code or server credentials");
+    fail("config");
     return;
   }
 
+  let stage = "token";
   try {
     const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
@@ -150,14 +155,26 @@ async function handleGoogleCallback(request, response, requestUrl) {
       }),
     });
     const tokenData = await tokenResponse.json();
-    if (!tokenResponse.ok || !tokenData.access_token) throw new Error("Token exchange failed");
+    if (!tokenResponse.ok || !tokenData.access_token) {
+      console.warn(`[Google OAuth] token exchange failed (${tokenData.error || tokenResponse.status})`);
+      fail("token");
+      return;
+    }
 
+    stage = "profile";
     const profileResponse = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
       headers: { Authorization: `Bearer ${tokenData.access_token}` },
     });
     const profile = await profileResponse.json();
-    if (!profileResponse.ok || !profile.sub || !profile.email || profile.email_verified !== true) {
-      throw new Error("Google profile could not be verified");
+    if (!profileResponse.ok) {
+      console.warn(`[Google OAuth] profile lookup failed (HTTP ${profileResponse.status})`);
+      fail("profile");
+      return;
+    }
+    if (!profile.sub || !profile.email || profile.email_verified !== true) {
+      console.warn("[Google OAuth] Google returned an incomplete or unverified profile");
+      fail("profile");
+      return;
     }
 
     const sessionId = crypto.randomBytes(32).toString("base64url");
@@ -174,8 +191,9 @@ async function handleGoogleCallback(request, response, requestUrl) {
       cookie("coretech_session", sessionId, { maxAge: sessionLifetimeSeconds }),
       clearState,
     ]);
-  } catch {
-    fail("error");
+  } catch (error) {
+    console.error(`[Google OAuth] ${stage} request failed (${error.name || "Error"})`);
+    fail("network");
   }
 }
 

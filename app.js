@@ -106,7 +106,17 @@ async function loadAuthSession() {
   }
   const result = new URLSearchParams(window.location.search).get("auth");
   if (result) {
-    showToast(result === "success" ? `Welcome, ${currentUser?.name || "you're signed in"}.` : result === "cancelled" ? "Google sign-in was cancelled." : "Google sign-in could not be completed.");
+    const authMessages = {
+      success: `Welcome, ${currentUser?.name || "you're signed in"}.`,
+      cancelled: "Google sign-in was cancelled.",
+      state: "The sign-in session expired or changed. Retry from this tab.",
+      config: "The sign-in server is missing its Google configuration.",
+      token: "Google rejected the client credentials or callback URI. Check the OAuth web client settings.",
+      profile: "Google did not return a verified profile for this account.",
+      network: "The sign-in server could not reach Google. Check its network access.",
+      provider: "Google could not authorize this sign-in. Check the Google consent screen settings.",
+    };
+    showToast(authMessages[result] || "Google sign-in could not be completed.");
     const cleanUrl = new URL(window.location.href);
     cleanUrl.searchParams.delete("auth");
     window.history.replaceState({}, "", cleanUrl.pathname + cleanUrl.search + cleanUrl.hash);
