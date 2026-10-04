@@ -29,7 +29,6 @@ const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
 const redirectUri = process.env.GOOGLE_REDIRECT_URI?.trim() || `http://localhost:${port}/auth/callback`;
 const supabaseDatabasePassword = process.env.SUPABASE_DATABASE_PASSWORD;
 const supabaseDatabaseConnectionString = process.env.SUPABASE_DATABASE_CONNECTION_STRING?.trim();
-const supabaseDatabaseSslCaPath = process.env.SUPABASE_DATABASE_SSL_CA_PATH?.trim();
 const secureCookies = process.env.NODE_ENV === "production" || redirectUri.startsWith("https://");
 const sessionLifetimeSeconds = 7 * 24 * 60 * 60;
 const stateLifetimeMs = 5 * 60 * 1000;
@@ -81,27 +80,14 @@ function getSupabasePool() {
 
   // The password is supplied separately so reserved characters are safely URL encoded.
   connectionUrl.password = supabaseDatabasePassword;
-  let ssl;
-  if (supabaseDatabaseSslCaPath) {
-    const caPath = path.resolve(root, supabaseDatabaseSslCaPath);
-    try {
-      const ca = fs.readFileSync(caPath, "utf8");
-      if (!ca.trim()) throw new Error("Empty certificate");
-      ssl = { ca, rejectUnauthorized: true };
-    } catch {
-      throw new SupabaseConfigurationError("Supabase SSL root certificate could not be read");
-    }
-    for (const parameter of ["sslmode", "sslrootcert", "sslcert", "sslkey", "uselibpqcompat"]) {
+  for (const parameter of [...connectionUrl.searchParams.keys()]) {
+    if (/^(sslmode|sslrootcert|sslcert|sslkey|uselibpqcompat)$/i.test(parameter)) {
       connectionUrl.searchParams.delete(parameter);
     }
-  } else {
-    // Supabase documents `require` for encryption; verification needs its downloaded root certificate.
-    connectionUrl.searchParams.set("uselibpqcompat", "true");
-    connectionUrl.searchParams.set("sslmode", "require");
   }
   supabasePool = new Pool({
     connectionString: connectionUrl.toString(),
-    ...(ssl ? { ssl } : {}),
+    ssl: false,
     max: 5,
     connectionTimeoutMillis: 8000,
     idleTimeoutMillis: 30000,

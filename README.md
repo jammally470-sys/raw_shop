@@ -12,6 +12,6 @@ Google sign-in requests basic OpenID Connect profile and email scopes. Sessions 
 
 ## Supabase user profiles
 
-Set `SUPABASE_DATABASE_PASSWORD` to the database password from Supabase and `SUPABASE_DATABASE_CONNECTION_STRING` to the PostgreSQL connection string from the Supabase dashboard. The password is supplied separately and replaces any password in the connection string. The server requires an encrypted SSL connection and never sends these values to the browser. For server certificate verification, download the project's root certificate from Supabase Database Settings and set `SUPABASE_DATABASE_SSL_CA_PATH` to its local path; without that certificate, SSL encrypts traffic but does not verify the server identity.
+Set `SUPABASE_DATABASE_PASSWORD` to the database password from Supabase and `SUPABASE_DATABASE_CONNECTION_STRING` to the PostgreSQL connection string from the Supabase dashboard. The password is supplied separately and replaces any password in the connection string. PostgreSQL SSL is disabled, including SSL options in the connection string. This requires the Supabase project to allow non-SSL database connections; database traffic will be unencrypted.
 
 After a successful Google sign-in, the server creates `public.users` if it does not exist, enables row-level security, and inserts or updates the verified Google profile. The table uses Google's stable subject ID as its primary key. The database role in the connection string needs permission to create and write the table. No client-facing row-level security policies are added.
