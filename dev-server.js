@@ -431,5 +431,7 @@ if (process.argv.includes("--ensure-users-table")) {
       if (!response.headersSent) response.writeHead(500, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
       response.end("Server error");
     });
-  }).listen(port, process.env.HOST || "127.0.0.1");
+  }).listen(port, "0.0.0.0", () => {
+    console.log(`Coretech server listening on 0.0.0.0:${port}`);
+  });
 }
