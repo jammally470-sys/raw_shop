@@ -26,7 +26,11 @@ loadEnvFile();
 
 const googleClientId = process.env.GOOGLE_CLIENT_ID?.trim();
 const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
-const redirectUri = process.env.GOOGLE_REDIRECT_URI?.trim() || `http://localhost:${port}/auth/callback`;
+const renderExternalUrl = process.env.RENDER_EXTERNAL_URL?.trim();
+const renderRedirectUri = renderExternalUrl ? new URL("/auth/callback", renderExternalUrl).toString() : "";
+const configuredRedirectUri = process.env.GOOGLE_REDIRECT_URI?.trim();
+const configuredRedirectIsLocal = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(\/|$)/i.test(configuredRedirectUri || "");
+const redirectUri = (configuredRedirectUri && !(renderExternalUrl && configuredRedirectIsLocal)) || renderRedirectUri || configuredRedirectUri || `http://localhost:${port}/auth/callback`;
 const supabaseDatabasePassword = process.env.SUPABASE_DATABASE_PASSWORD;
 const supabaseDatabaseConnectionString = process.env.SUPABASE_DATABASE_CONNECTION_STRING?.trim();
 const secureCookies = process.env.NODE_ENV === "production" || redirectUri.startsWith("https://");
@@ -433,5 +437,6 @@ if (process.argv.includes("--ensure-users-table")) {
     });
   }).listen(port, "0.0.0.0", () => {
     console.log(`Coretech server listening on 0.0.0.0:${port}`);
+    console.log(`Google OAuth callback URI: ${redirectUri}`);
   });
 }

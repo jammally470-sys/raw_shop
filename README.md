@@ -9,7 +9,7 @@
 The server reads `.env` locally. Do not commit `.env`; `.gitignore` excludes it. For deployment, run the Node server on a host that supports backend routes and set the credentials in that host's environment. Set `GOOGLE_REDIRECT_URI` to the exact HTTPS callback URL configured in Google Cloud Console.
 ## Deploy on Render
 
-Create a Render **Web Service** for this repository with build command `npm install` and start command `npm start`. The server binds to `0.0.0.0` and uses Render's `PORT` environment variable. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` (for example, `https://your-service.onrender.com/auth/callback`), `SUPABASE_DATABASE_PASSWORD`, and `SUPABASE_DATABASE_CONNECTION_STRING` in the Render dashboard. Add the callback URL to the Google OAuth client's authorized redirect URIs.
+Create a Render **Web Service** for this repository with build command `npm install` and start command `npm start`. The server binds to `0.0.0.0` and uses Render's `PORT` environment variable. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` (for example, `https://your-service.onrender.com/auth/callback`), `SUPABASE_DATABASE_PASSWORD`, and `SUPABASE_DATABASE_CONNECTION_STRING` in the Render dashboard. If GOOGLE_REDIRECT_URI is omitted or still points to localhost, the app derives the callback from Render's RENDER_EXTERNAL_URL. Add the exact callback URL shown in the Render logs to the Google OAuth client's authorized redirect URIs.
 
 Google sign-in requests basic OpenID Connect profile and email scopes. Sessions are stored in memory and reset when the server restarts.
 
